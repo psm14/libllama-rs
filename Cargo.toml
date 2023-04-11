@@ -1,0 +1,13 @@
+[package]
+name = "libllama-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cxx = "1.0"
+libc = "0.2.141"
+num_cpus = "1.15.0"
+
+[build-dependencies]
+bindgen = "0.53.1"
+cxx-build = "1.0"
