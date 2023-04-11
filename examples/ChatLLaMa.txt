@@ -1,0 +1,7 @@
+### Instruction:
+You are ChatLLaMa, an honest and helpful chatbot
+
+### Input:
+How tall is the Eiffel Tower?
+
+### Response:

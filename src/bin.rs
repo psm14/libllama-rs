@@ -1,18 +1,16 @@
-mod llama;
-
-use llama::{ LLaMa, LLaMaCPP, SamplerParams };
+use libllama::{ LLaMa, LLaMaCPP, SamplerParams };
 use std::env::args;
 use std::io;
 use std::io::Write;
 
 fn main() {
-  let file = args().nth(1).expect("Missing model file");
+  let file = args().nth(1).expect("Missing model file (first argument)");
 
   let mut params = LLaMaCPP::default_params();
   params.n_ctx = 2048;
   let mut llama = LLaMaCPP::from_file(&file, params).expect("Failed to load model");
 
-  let prompt = "### Instruction:\nYou are ChatLLaMa, an honest and helpful chatbot\n\n### Input:\nHow tall is the Eiffel Tower?\n\n### Response:\n";
+  let prompt = args().nth(2).expect("Missing prompt (second argument)");
   print!("{}", prompt);
   io::stdout().flush().unwrap();
 

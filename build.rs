@@ -16,14 +16,17 @@ fn main() {
     let llama_o_path = libdir_path.join("llama.o");
     let ggml_o_path = libdir_path.join("ggml.o");
 
-    println!("cargo:rustc-link-search=.");
+    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let llama_a_path = out_path.join("libllama.a");
+
+    println!("cargo:rustc-link-search={}", out_path.to_str().expect("Path is not a valid string"));
     println!("cargo:rustc-link-lib=llama");
     println!("cargo:rerun-if-changed={}", headers_path_str);
 
     #[cfg(target_os = "macos")]
     println!("cargo:rustc-link-lib=framework=Accelerate");
 
-    cxx_build::bridge("src/llama.rs").flag_if_supported("-std=c++11");
+    cxx_build::bridge("src/lib.rs").flag_if_supported("-std=c++11");
 
     if !std::process::Command::new("make")
         .current_dir(&libdir_path)
@@ -39,7 +42,7 @@ fn main() {
 
     if !std::process::Command::new("ar")
         .arg("rcs")
-        .arg("libllama.a")
+        .arg(llama_a_path.to_str().expect("Path is not a valid string"))
         .arg(llama_o_path.to_str().expect("Path is not a valid string"))
         .arg(ggml_o_path.to_str().expect("Path is not a valid string"))
         .output()
