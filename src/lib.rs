@@ -187,21 +187,15 @@ impl Drop for LLaMaCPP {
   }
 }
 
-pub trait Tokenizer {
-  type Token: Copy;
+pub trait LLaMa {
+  type Token;
+  type TokenIterator<'a>: Iterator where Self: 'a;
 
   fn tokenize(&self, text: &str) -> Vec<Self::Token>;
   fn to_str(&self, token: Self::Token) -> &str;
   fn bos(&self) -> Self::Token;
   fn eos(&self) -> Self::Token;
-}
 
-pub trait LLaMa {
-  type Token;
-  type Tokenizer: Tokenizer<Token = Self::Token>;
-  type TokenIterator<'a>: Iterator where Self: 'a;
-
-  fn tokenizer(&self) -> Self::Tokenizer;
   fn token_iter(&mut self, params: SamplerParams) -> Self::TokenIterator<'_>;
 }
 
@@ -219,12 +213,12 @@ impl LLaMaCPPTokenIter<'_> {
     self.n_past += self.n_last;
   }
 
-  pub fn consume(mut self, prompt: &str) -> Self {
+  pub fn consume(self, prompt: &str) -> Self {
     let tokens = self.context.tokenize_internal(prompt);
     self.consume_tokens(&tokens)
   }
 
-  pub fn consume_bos(mut self) -> Self {
+  pub fn consume_bos(self) -> Self {
     self.consume_tokens(&[LLaMaCPP::bos_token()])
   }
 
@@ -257,17 +251,16 @@ impl Iterator for LLaMaCPPTokenIter<'_> {
   }
 }
 
-impl Tokenizer for *const LLaMaCPP {
+impl LLaMa for LLaMaCPP {
   type Token = llama_token;
+  type TokenIterator<'a> = LLaMaCPPTokenIter<'a>;
 
   fn tokenize(&self, text: &str) -> Vec<Self::Token> {
-    let llama = unsafe { &**self };
-    llama.tokenize_internal(text)
+    self.tokenize_internal(text)
   }
 
   fn to_str(&self, token: Self::Token) -> &str {
-    let llama = unsafe { &**self };
-    llama.token_to_str(token)
+    self.token_to_str(token)
   }
 
   fn bos(&self) -> Self::Token {
@@ -276,16 +269,6 @@ impl Tokenizer for *const LLaMaCPP {
 
   fn eos(&self) -> Self::Token {
     LLaMaCPP::eos_token()
-  }
-}
-
-impl LLaMa for LLaMaCPP {
-  type Token = llama_token;
-  type Tokenizer = *const Self;
-  type TokenIterator<'a> = LLaMaCPPTokenIter<'a>;
-
-  fn tokenizer(&self) -> Self::Tokenizer {
-    &*self as *const Self
   }
 
   fn token_iter(&mut self, params: SamplerParams) -> Self::TokenIterator<'_> {
