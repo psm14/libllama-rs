@@ -1,4 +1,4 @@
-use libllama::{ LLaMa, LLaMaCPP, SamplerParams };
+use libllama::{ LLaMa, LLaMaCPP };
 use std::env::args;
 use std::io;
 use std::io::Write;
@@ -14,7 +14,7 @@ fn main() {
   print!("{}", prompt);
   io::stdout().flush().unwrap();
 
-  for token in llama.token_iter(SamplerParams::default()).consume_bos().consume(&prompt) {
+  for token in llama.iter().consume_bos().consume(" ").consume(prompt) {
     print!("{}", token);
     io::stdout().flush().unwrap();
   }

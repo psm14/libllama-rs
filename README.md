@@ -4,7 +4,7 @@ Rust bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp)
 
 ## Overview
 
-`libllama-rs` is intended to be a wrap `llama.cpp`'s C API and provide a slightly more idiomatic Rust interface to it.
+`libllama-rs` is a wrapper around `llama.cpp`'s C API that provides a slightly more idiomatic Rust interface to it.
 
 ## Basic Usage
 
@@ -20,11 +20,10 @@ How tall is the Eiffel Tower?
 ### Response:
 ";
 
-let continuation = llama.token_iter(SamplerParams::default())
+let continuation = llama.iter()
   .consume_bos()
   .consume(&prompt)
-  .collect::<Vec<_>>()
-  .join("");
+  .collect::<String>();
 
 println!("{}{}", prompt, continuation);
 ```

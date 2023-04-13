@@ -8,6 +8,7 @@ mod LLaMaMod {}
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
+use std::convert::AsRef;
 use std::ffi::CString;
 use std::iter::Iterator;
 use std::os::raw::{c_char, c_int};
@@ -22,8 +23,7 @@ pub struct Params {
   pub n_parts: c_int,
   pub seed: c_int,
   pub threads: c_int,
-  pub f16_kv: bool,
-  pub logits_all: bool,
+  pub embedding: bool,
   pub use_mmap: bool,
   pub use_mlock: bool,
 }
@@ -38,20 +38,26 @@ pub struct SamplerParams {
 
 impl SamplerParams {
   pub fn default() -> SamplerParams {
-    SamplerParams {
+    Self {
       top_p: 0.9,
       top_k: 40,
       repeat_penalty: 1.17,
-      temperature: 1.17,
+      temperature: 0.7,
     }
   }
 }
+  
+
+enum Sampler {
+  BuiltinSampler(SamplerParams),
+  SamplerFn(fn(&[f32]) -> llama_token)
+}
+
 
 pub struct LLaMaCPP {
   context: *mut llama_context,
   params: Params,
 }
-
 
 
 impl LLaMaCPP {
@@ -60,11 +66,11 @@ impl LLaMaCPP {
       n_ctx: params.n_ctx,
       n_parts: params.n_parts,
       seed: params.seed,
-      f16_kv: params.f16_kv,
-      logits_all: params.logits_all,
+      f16_kv: false,
+      logits_all: false,
       use_mmap: params.use_mmap,
       use_mlock: params.use_mlock,
-      embedding: false,
+      embedding: params.embedding,
       vocab_only: false,
       progress_callback: None,
       progress_callback_user_data: std::ptr::null_mut(),
@@ -92,9 +98,9 @@ impl LLaMaCPP {
 
   fn tokenize_internal(&self, text: &str) -> Vec<llama_token> {
     let c_text = CString::new(text).unwrap();
-    let mut tokens = Vec::with_capacity(self.params.n_ctx as usize);
+    let mut tokens = Vec::with_capacity(text.len());
     unsafe {
-      let n_tokens = llama_tokenize(self.context, c_text.as_ptr(), tokens.as_mut_ptr(), self.params.n_ctx, false);
+      let n_tokens = llama_tokenize(self.context, c_text.as_ptr(), tokens.as_mut_ptr(), text.len() as i32, false);
       tokens.set_len(n_tokens as usize);
     }
     tokens
@@ -112,35 +118,40 @@ impl LLaMaCPP {
     }
   }
 
-  fn get_logits(&self, last_n_tokens: usize) -> Vec<&[f32]> {
-    let mut result = Vec::with_capacity(last_n_tokens);
+  fn get_last_logits(&self, last_n_tokens: usize) -> &[f32] {
     unsafe {
       let logits_start = llama_get_logits(self.context) as usize;
-      for i in 0..last_n_tokens {
-        let row = slice::from_raw_parts((logits_start + i * self.n_vocab() as usize) as *const f32, self.n_vocab() as usize);
-        result.push(row);
-      }
+      slice::from_raw_parts((logits_start + (last_n_tokens - 1) * self.n_vocab() as usize) as *const f32, self.n_vocab() as usize)
     }
-    result
   }
 
-  fn n_vocab(&self) -> i32 {
+  fn get_embeddings(&self) -> Option<&[f32]> {
+    if (!self.params.embedding) {
+      return None;
+    }
+    unsafe {
+      let embedding = llama_get_embeddings(self.context);
+      Some(slice::from_raw_parts(embedding as *const f32, self.n_embd() as usize))
+    }
+  }
+
+  pub fn n_vocab(&self) -> i32 {
     unsafe { llama_n_vocab(self.context) }
   }
 
-  fn n_ctx(&self) -> i32 {
+  pub fn n_ctx(&self) -> i32 {
     unsafe { llama_n_ctx(self.context) }
   }
 
-  fn n_embd(&self) -> i32 {
+  pub fn n_embd(&self) -> i32 {
     unsafe { llama_n_embd(self.context) }
   }
 
-  fn threads(&self) -> i32 {
+  pub fn threads(&self) -> i32 {
     self.params.threads
   }
 
-  fn system_info() -> &'static str {
+  pub fn system_info() -> &'static str {
     unsafe {
       // This is &'static
       let cstr: *const c_char = llama_print_system_info();
@@ -148,11 +159,11 @@ impl LLaMaCPP {
     }
   }
 
-  fn mmap_supported() -> bool {
+  pub fn mmap_supported() -> bool {
     unsafe { llama_mmap_supported() }
   }
 
-  fn mlock_supported() -> bool {
+  pub fn mlock_supported() -> bool {
     unsafe { llama_mlock_supported() }
   }
 
@@ -171,8 +182,7 @@ impl LLaMaCPP {
       n_parts: ffi_params.n_parts,
       seed: ffi_params.seed,
       threads: num_cpus::get() as i32,
-      f16_kv: ffi_params.f16_kv,
-      logits_all: ffi_params.logits_all,
+      embedding: false,
       use_mmap: ffi_params.use_mmap,
       use_mlock: ffi_params.use_mlock,
     }
@@ -196,43 +206,91 @@ pub trait LLaMa {
   fn bos(&self) -> Self::Token;
   fn eos(&self) -> Self::Token;
 
-  fn token_iter(&mut self, params: SamplerParams) -> Self::TokenIterator<'_>;
+  fn iter(&mut self) -> Self::TokenIterator<'_>;
 }
 
 pub struct LLaMaCPPTokenIter<'a> {
   context: &'a mut LLaMaCPP,
-  params: SamplerParams,
+  sampler: Sampler,
   n_past: i32,
   n_last: i32,
 }
 
 impl LLaMaCPPTokenIter<'_> {
   fn consume_internal(&mut self, tokens: &[llama_token]) {
-    self.context.consume_tokens(tokens, self.n_past);
-    self.n_last = tokens.len() as i32;
-    self.n_past += self.n_last;
+    let new_tokens = tokens.len() as i32;
+    let n_ctx = self.context.n_ctx();
+
+    if new_tokens == 0 {
+      return;
+    } else if new_tokens > n_ctx {
+      self.n_last = n_ctx;
+      self.context.consume_tokens(&tokens[0..(n_ctx - 1) as usize], 0);
+      self.n_past = n_ctx;
+      return self.consume_internal(&tokens[n_ctx as usize..tokens.len()]);
+    }
+
+    let n_past = if self.n_past + new_tokens > n_ctx {
+      n_ctx - new_tokens
+    } else {
+      self.n_past
+    };
+    self.context.consume_tokens(tokens, n_past);
+    self.n_past = n_past + new_tokens;
+    self.n_last = new_tokens;
   }
 
-  pub fn consume(self, prompt: &str) -> Self {
-    let tokens = self.context.tokenize_internal(prompt);
-    self.consume_tokens(&tokens)
+  pub fn consume_tokens<T>(mut self, tokens: T) -> Self where T: AsRef<[llama_token]> {
+    self.consume_internal(tokens.as_ref());
+    self
+  }
+
+  pub fn consume<P>(mut self, prompt: P) -> Self where P: AsRef<str> {
+    let tokens = self.context.tokenize_internal(prompt.as_ref());
+    self.consume_internal(&tokens);
+    self
   }
 
   pub fn consume_bos(self) -> Self {
     self.consume_tokens(&[LLaMaCPP::bos_token()])
   }
 
-  pub fn consume_tokens(mut self, tokens: &[llama_token]) -> Self {
-    self.consume_internal(tokens);
+  pub fn with_sampler_params(mut self, sampler_params: SamplerParams) -> Self {
+    self.sampler = Sampler::BuiltinSampler(sampler_params);
+    self
+  }
+
+  pub fn with_sampler_fn(mut self, sampler_fn: fn(&[f32]) -> llama_token) -> Self {
+    self.sampler = Sampler::SamplerFn(sampler_fn);
     self
   }
 
   pub fn sample(&self) -> llama_token {
-    self.context.sample_token(self.params)
+    match self.sampler {
+      Sampler::BuiltinSampler(params) => self.context.sample_token(params),
+      Sampler::SamplerFn(f) => {
+        if self.n_last == 0 {
+          // TODO: When is this the case during normal usage? Is this arbitrarily decided
+          // behavior fine?
+          self.context.eos()
+        } else {
+          let logits = self.context.get_last_logits(self.n_last as usize);
+          f(logits)
+        }
+      },
+    }
   }
 
-  pub fn get_logits(&self) -> Vec<&[f32]> {
-    self.context.get_logits(self.n_last as usize)
+  pub fn logits(&self) -> Option<&[f32]> {
+    if self.n_last == 0 {
+      None
+    } else {
+      Some(self.context.get_last_logits(self.n_last as usize))
+    }
+  }
+
+  pub fn embeddings(&self) -> Option<&[f32]> {
+    self.context.get_embeddings()
   }
 }
 
@@ -271,7 +329,8 @@ impl LLaMa for LLaMaCPP {
     LLaMaCPP::eos_token()
   }
 
-  fn token_iter(&mut self, params: SamplerParams) -> Self::TokenIterator<'_> {
-    LLaMaCPPTokenIter { context: self, params, n_past: 0, n_last: 0 }
+  fn iter(&mut self) -> Self::TokenIterator<'_> {
+    let sampler = Sampler::BuiltinSampler(SamplerParams::default());
+    LLaMaCPPTokenIter { context: self, sampler, n_past: 0, n_last: 0 }
   }
 }
