@@ -54,14 +54,14 @@ enum Sampler {
 }
 
 
-pub struct LLaMaCPP {
+pub struct LLaMA {
   context: *mut llama_context,
   params: Params,
 }
 
 
-impl LLaMaCPP {
-  pub fn from_file(path: &str, params: Params) -> Result<LLaMaCPP, LLaMaError> {
+impl LLaMA {
+  pub fn from_file(path: &str, params: Params) -> Result<LLaMA, LLaMaError> {
     let llama_context_params = llama_context_params {
       n_ctx: params.n_ctx,
       n_parts: params.n_parts,
@@ -83,7 +83,7 @@ impl LLaMaCPP {
       if context == std::ptr::null_mut() {
         Err(LLaMaError("Failed to load model"))
       } else {
-        Ok(LLaMaCPP { context, params })
+        Ok(LLaMA { context, params })
       }
     }
   }
@@ -189,7 +189,7 @@ impl LLaMaCPP {
   }
 }
 
-impl Drop for LLaMaCPP {
+impl Drop for LLaMA {
   fn drop(&mut self) {
     unsafe {
       llama_free(self.context);
@@ -197,7 +197,7 @@ impl Drop for LLaMaCPP {
   }
 }
 
-pub trait LLaMa {
+pub trait LLM {
   type Token;
   type TokenIterator<'a>: Iterator where Self: 'a;
 
@@ -209,14 +209,14 @@ pub trait LLaMa {
   fn iter(&mut self) -> Self::TokenIterator<'_>;
 }
 
-pub struct LLaMaCPPTokenIter<'a> {
-  context: &'a mut LLaMaCPP,
+pub struct LLaMATokenIter<'a> {
+  context: &'a mut LLaMA,
   sampler: Sampler,
   n_past: i32,
   n_last: i32,
 }
 
-impl LLaMaCPPTokenIter<'_> {
+impl LLaMATokenIter<'_> {
   fn consume_internal(&mut self, tokens: &[llama_token]) {
     let new_tokens = tokens.len() as i32;
     let n_ctx = self.context.n_ctx();
@@ -252,7 +252,11 @@ impl LLaMaCPPTokenIter<'_> {
   }
 
   pub fn consume_bos(self) -> Self {
-    self.consume_tokens(&[LLaMaCPP::bos_token()])
+    self.consume_tokens(&[LLaMA::bos_token()])
+  }
+
+  pub fn consume_eos(self) -> Self {
+    self.consume_tokens(&[LLaMA::eos_token()])
   }
 
   pub fn with_sampler_params(mut self, sampler_params: SamplerParams) -> Self {
@@ -294,12 +298,12 @@ impl LLaMaCPPTokenIter<'_> {
   }
 }
 
-impl Iterator for LLaMaCPPTokenIter<'_> {
+impl Iterator for LLaMATokenIter<'_> {
   type Item = String;
 
   fn next(&mut self) -> Option<Self::Item> {
     let token = self.sample();
-    if token == LLaMaCPP::eos_token() {
+    if token == LLaMA::eos_token() {
       return None;
     }
     self.consume_internal(&[token]);
@@ -309,9 +313,9 @@ impl Iterator for LLaMaCPPTokenIter<'_> {
   }
 }
 
-impl LLaMa for LLaMaCPP {
+impl LLM for LLaMA {
   type Token = llama_token;
-  type TokenIterator<'a> = LLaMaCPPTokenIter<'a>;
+  type TokenIterator<'a> = LLaMATokenIter<'a>;
 
   fn tokenize(&self, text: &str) -> Vec<Self::Token> {
     self.tokenize_internal(text)
@@ -322,15 +326,15 @@ impl LLaMa for LLaMaCPP {
   }
 
   fn bos(&self) -> Self::Token {
-    LLaMaCPP::bos_token()
+    LLaMA::bos_token()
   }
 
   fn eos(&self) -> Self::Token {
-    LLaMaCPP::eos_token()
+    LLaMA::eos_token()
   }
 
   fn iter(&mut self) -> Self::TokenIterator<'_> {
     let sampler = Sampler::BuiltinSampler(SamplerParams::default());
-    LLaMaCPPTokenIter { context: self, sampler, n_past: 0, n_last: 0 }
+    LLaMATokenIter { context: self, sampler, n_past: 0, n_last: 0 }
   }
 }

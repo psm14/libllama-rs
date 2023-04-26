@@ -1,7 +1,4 @@
-### Instruction:
-You are ChatLLaMa, an honest and helpful chatbot
+A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
 
-### Input:
-How tall is the Eiffel Tower?
-
-### Response:
+USER: How tall is the Eiffel Tower?
+ASSISTANT:
