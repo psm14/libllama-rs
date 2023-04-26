@@ -1,4 +1,4 @@
-use libllama::{ LLM, LLaMA };
+use libllama::{ LLM, LLaMA, Params };
 use std::env::args;
 use std::io;
 use std::io::Write;
@@ -6,7 +6,7 @@ use std::io::Write;
 fn main() {
   let file = args().nth(1).expect("Missing model file (first argument)");
 
-  let mut params = LLaMA::default_params();
+  let mut params: Params = Default::default();
   params.n_ctx = 2048;
   let mut llama = LLaMA::from_file(&file, params).expect("Failed to load model");
 

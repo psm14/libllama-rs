@@ -9,6 +9,8 @@ mod LLaMaMod {}
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
 use std::convert::AsRef;
+use std::cmp::{ max, min };
+use std::default::Default;
 use std::ffi::CString;
 use std::iter::Iterator;
 use std::os::raw::{c_char, c_int};
@@ -21,11 +23,28 @@ pub struct LLaMaError(&'static str);
 pub struct Params {
   pub n_ctx: c_int,
   pub n_parts: c_int,
+  pub n_batch: u32,
   pub seed: c_int,
   pub threads: c_int,
   pub embedding: bool,
   pub use_mmap: bool,
   pub use_mlock: bool,
+}
+
+impl Default for Params {
+  fn default() -> Params {
+    let ffi_params = unsafe { llama_context_default_params() };
+    Params {
+      n_ctx: ffi_params.n_ctx,
+      n_parts: ffi_params.n_parts,
+      n_batch: 512, // TODO: Is this a good default?
+      seed: ffi_params.seed,
+      threads: num_cpus::get() as i32,
+      embedding: false,
+      use_mmap: ffi_params.use_mmap,
+      use_mlock: ffi_params.use_mlock,
+    }
+  }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -126,7 +145,7 @@ impl LLaMA {
   }
 
   fn get_embeddings(&self) -> Option<&[f32]> {
-    if (!self.params.embedding) {
+    if !self.params.embedding {
       return None;
     }
     unsafe {
@@ -175,18 +194,7 @@ impl LLaMA {
     unsafe { llama_token_eos() }
   }
 
-  pub fn default_params() -> Params {
-    let ffi_params = unsafe { llama_context_default_params() };
-    Params {
-      n_ctx: ffi_params.n_ctx,
-      n_parts: ffi_params.n_parts,
-      seed: ffi_params.seed,
-      threads: num_cpus::get() as i32,
-      embedding: false,
-      use_mmap: ffi_params.use_mmap,
-      use_mlock: ffi_params.use_mlock,
-    }
-  }
+  
 }
 
 impl Drop for LLaMA {
@@ -213,31 +221,29 @@ pub struct LLaMATokenIter<'a> {
   context: &'a mut LLaMA,
   sampler: Sampler,
   n_past: i32,
-  n_last: i32,
 }
 
 impl LLaMATokenIter<'_> {
   fn consume_internal(&mut self, tokens: &[llama_token]) {
     let new_tokens = tokens.len() as i32;
-    let n_ctx = self.context.n_ctx();
-
     if new_tokens == 0 {
       return;
-    } else if new_tokens > n_ctx {
-      self.n_last = n_ctx;
-      self.context.consume_tokens(&tokens[0..(n_ctx - 1) as usize], 0);
-      self.n_past = n_ctx;
-      return self.consume_internal(&tokens[n_ctx as usize..tokens.len()]);
     }
 
-    let n_past = if self.n_past + new_tokens > n_ctx {
-      n_ctx - new_tokens
-    } else {
-      self.n_past
-    };
+    let n_ctx = self.context.params.n_ctx;
+    let n_batch = self.context.params.n_batch;
+
+    let max_batch = min(n_batch as usize, n_ctx as usize);
+    let (tokens, remainder) = if max_batch < tokens.len() { tokens.split_at(max_batch) } else { (tokens, &[] as &[llama_token]) };
+
+    let overflow = max(0, self.n_past + tokens.len() as i32 - n_ctx);
+    let n_past = self.n_past - overflow;
     self.context.consume_tokens(tokens, n_past);
     self.n_past = n_past + new_tokens;
-    self.n_last = new_tokens;
+
+    if remainder.len() > 0 {
+      self.consume_internal(remainder);
+    }
   }
 
   pub fn consume_tokens<T>(mut self, tokens: T) -> Self where T: AsRef<[llama_token]> {
@@ -273,12 +279,12 @@ impl LLaMATokenIter<'_> {
     match self.sampler {
       Sampler::BuiltinSampler(params) => self.context.sample_token(params),
       Sampler::SamplerFn(f) => {
-        if self.n_last == 0 {
+        if self.n_past == 0 {
           // TODO: When is this the case during normal usage? Is this arbitrarily decided
           // behavior fine?
           self.context.eos()
         } else {
-          let logits = self.context.get_last_logits(self.n_last as usize);
+          let logits = self.context.get_last_logits(self.n_past as usize);
           f(logits)
         }
       },
@@ -286,10 +292,10 @@ impl LLaMATokenIter<'_> {
   }
 
   pub fn logits(&self) -> Option<&[f32]> {
-    if self.n_last == 0 {
+    if self.n_past == 0 {
       None
     } else {
-      Some(self.context.get_last_logits(self.n_last as usize))
+      Some(self.context.get_last_logits(self.n_past as usize))
     }
   }
 
@@ -335,6 +341,6 @@ impl LLM for LLaMA {
 
   fn iter(&mut self) -> Self::TokenIterator<'_> {
     let sampler = Sampler::BuiltinSampler(SamplerParams::default());
-    LLaMATokenIter { context: self, sampler, n_past: 0, n_last: 0 }
+    LLaMATokenIter { context: self, sampler, n_past: 0 }
   }
 }

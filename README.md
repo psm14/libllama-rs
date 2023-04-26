@@ -9,7 +9,7 @@ Rust bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp)
 ## Basic Usage
 
 ```rust
-let mut llama = LLaMA::from_file(&file, LLaMA::default_params()).expect("Failed to load model");
+let mut llama = LLaMA::from_file(&file, Default::default()).expect("Failed to load model");
 
 let prompt = "### Instruction:
 You are ChatLLaMa, an honest and helpful chatbot
