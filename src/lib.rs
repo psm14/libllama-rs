@@ -132,15 +132,34 @@ impl LLaMA {
   }
 
   fn sample_token(&self, sampler_params: SamplerParams) -> llama_token {
+    let mut candidates_p_vec: Vec<llama_token_data> = Vec::with_capacity(self.n_vocab() as usize);
+    let logits = self.get_last_logits();
+    for i in 0..self.n_vocab() as usize {
+      candidates_p_vec.push(llama_token_data {
+        id: i as llama_token,
+        logit: logits[i],
+        p: 0.0f32,
+      });
+    }
+
     unsafe {
-      llama_sample_top_p_top_k(self.context, std::ptr::null(), 0, sampler_params.top_k, sampler_params.top_p, sampler_params.temperature, sampler_params.repeat_penalty)
+      let mut candidates_p = llama_token_data_array {
+        data: candidates_p_vec.as_mut_ptr(),
+        size: candidates_p_vec.len() as size_t,
+        sorted: false,
+      };
+      llama_sample_repetition_penalty(self.context, &mut candidates_p, std::ptr::null(), 0, sampler_params.repeat_penalty);
+      llama_sample_top_k(self.context, &mut candidates_p, sampler_params.top_k, 1);
+      llama_sample_top_p(self.context, &mut candidates_p, sampler_params.top_p, 1);
+      llama_sample_temperature(self.context, &mut candidates_p, sampler_params.temperature);
+      llama_sample_token(self.context, &mut candidates_p)
     }
   }
 
-  fn get_last_logits(&self, last_n_tokens: usize) -> &[f32] {
+  fn get_last_logits(&self) -> &[f32] {
     unsafe {
       let logits_start = llama_get_logits(self.context) as usize;
-      slice::from_raw_parts((logits_start + (last_n_tokens - 1) * self.n_vocab() as usize) as *const f32, self.n_vocab() as usize)
+      slice::from_raw_parts(logits_start as *const f32, self.n_vocab() as usize)
     }
   }
 
@@ -284,7 +303,7 @@ impl LLaMATokenIter<'_> {
           // behavior fine?
           self.context.eos()
         } else {
-          let logits = self.context.get_last_logits(self.n_past as usize);
+          let logits = self.context.get_last_logits();
           f(logits)
         }
       },
@@ -295,7 +314,7 @@ impl LLaMATokenIter<'_> {
     if self.n_past == 0 {
       None
     } else {
-      Some(self.context.get_last_logits(self.n_past as usize))
+      Some(self.context.get_last_logits())
     }
   }
 

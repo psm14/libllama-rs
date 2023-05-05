@@ -1,4 +1,8 @@
-A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
+### Instruction:
+You are a friendly and helpful chatbot
 
-USER: How tall is the Eiffel Tower?
-ASSISTANT:
+### Input:
+What is a haiku?
+
+### Response:
+

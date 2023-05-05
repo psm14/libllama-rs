@@ -22,6 +22,9 @@ fn main() {
     println!("cargo:rustc-link-search={}", out_path.to_str().expect("Path is not a valid string"));
     println!("cargo:rustc-link-lib=llama");
     println!("cargo:rerun-if-changed={}", headers_path_str);
+    println!("cargo:rerun-if-changed={}", libdir_path.join("llama.cpp").to_string_lossy());
+    println!("cargo:rerun-if-changed={}", libdir_path.join("ggml.c").to_string_lossy());
+
 
     #[cfg(target_os = "macos")]
     println!("cargo:rustc-link-lib=framework=Accelerate");
