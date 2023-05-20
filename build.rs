@@ -30,17 +30,6 @@ fn main() {
 
     cxx_build::bridge("src/lib.rs").flag_if_supported("-std=c++11");
 
-    if !std::process::Command::new("git")
-         .current_dir(&libdir_path)
-         .arg("apply")
-         .arg("../llama-c-compatibility.patch")
-         .output()
-         .expect("could not spawn `git`")
-         .status
-         .success() {
-      panic!("could not apply patch to libllama");
-    }
-
     if !std::process::Command::new("make")
         .current_dir(&libdir_path)
         .arg("llama.o")
@@ -74,15 +63,4 @@ fn main() {
     bindings
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write bindings!");
-
-    if !std::process::Command::new("git")
-         .current_dir(&libdir_path)
-         .arg("checkout")
-         .arg(".")
-         .output()
-         .expect("could not spawn `git`")
-         .status
-         .success() {
-      panic!("could not undo patch to libllama");
-    }
 }

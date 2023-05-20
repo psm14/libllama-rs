@@ -2,7 +2,7 @@
 You are a friendly and helpful chatbot
 
 ### Input:
-What is a haiku?
+How tall is the Eiffel Tower?
 
 ### Response:
 

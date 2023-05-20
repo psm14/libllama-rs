@@ -22,8 +22,8 @@ pub struct LLaMaError(&'static str);
 
 pub struct Params {
   pub n_ctx: c_int,
-  pub n_parts: c_int,
   pub n_batch: u32,
+  pub n_gpu_layers: c_int,
   pub seed: c_int,
   pub threads: c_int,
   pub embedding: bool,
@@ -36,8 +36,8 @@ impl Default for Params {
     let ffi_params = unsafe { llama_context_default_params() };
     Params {
       n_ctx: ffi_params.n_ctx,
-      n_parts: ffi_params.n_parts,
       n_batch: 512, // TODO: Is this a good default?
+      n_gpu_layers: 0,
       seed: ffi_params.seed,
       threads: num_cpus::get() as i32,
       embedding: false,
@@ -83,7 +83,7 @@ impl LLaMA {
   pub fn from_file(path: &str, params: Params) -> Result<LLaMA, LLaMaError> {
     let llama_context_params = llama_context_params {
       n_ctx: params.n_ctx,
-      n_parts: params.n_parts,
+      n_gpu_layers: params.n_gpu_layers,
       seed: params.seed,
       f16_kv: false,
       logits_all: false,
